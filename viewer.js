@@ -193,17 +193,43 @@ export async function mount(el, opts) {
   }
 
   // 방향: 앞(+z), 뒤(-z), 옆(+x 쪽), az = 수평 각(라디안)
-  function look(az, box) {
-    const b = box || frame;
+  function place(cam, az, b) {
     const c = b ? b.getCenter(new THREE.Vector3()) : M.center.clone();
     const sz = b ? b.getSize(new THREE.Vector3()) : new THREE.Vector3(0.6, M.height, 0.4);
     const h = Math.min(Math.max(sz.y * 1.35, sz.x * 1.5, 0.95), M.height * 1.12);
-    const dist = h / 2 / Math.tan((camera.fov * Math.PI) / 360) / Math.min(1, camera.aspect * 1.25);
+    const dist = h / 2 / Math.tan((cam.fov * Math.PI) / 360) / Math.min(1, cam.aspect * 1.25);
+    cam.position.set(c.x + Math.sin(az) * dist, c.y + dist * 0.06, c.z + Math.cos(az) * dist);
+    cam.lookAt(c);
+    return c;
+  }
+  function look(az, box) {
+    const c = place(camera, az, box || frame);
     controls.target.copy(c);
-    camera.position.set(c.x + Math.sin(az) * dist, c.y + dist * 0.06, c.z + Math.cos(az) * dist);
-    camera.lookAt(c);
     controls.update();
     kick();
+  }
+  // 대상 근육이 가장 많이 보이는 방향: 후보 방향마다 작은 화면에 대상만 흰색, 나머지는 검정(가림막)으로 그려 흰 점을 센다.
+  // (법선으로 고르면 Latissimus dorsi·Trapezius 같은 얇은 판 근육은 앞뒷면이 상쇄돼 방향을 잘못 고른다)
+  const RW = 96, RH = 120;
+  let probe = null;
+  function bestView(target, box) {
+    if (!probe) probe = { rt: new THREE.WebGLRenderTarget(RW, RH), buf: new Uint8Array(RW * RH * 4), white: new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }), black: new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.DoubleSide }), cam: new THREE.PerspectiveCamera(30, RW / RH, 0.05, 20) };
+    const saved = {}, vis = {};
+    for (const k in meshes) { saved[k] = meshes[k].material; vis[k] = meshes[k].visible; meshes[k].material = k === target ? probe.white : probe.black; }
+    if (xray) meshes.base.visible = false; // 투시 중이면 겉근육은 가리지 않는다
+    const cc = new THREE.Color(); renderer.getClearColor(cc); const ca = renderer.getClearAlpha();
+    renderer.setClearColor(0x000000, 1);
+    const sc = VIEWS.map(([az, bias]) => {
+      place(probe.cam, az, box);
+      renderer.setRenderTarget(probe.rt); renderer.clear(); renderer.render(scene, probe.cam);
+      renderer.readRenderTargetPixels(probe.rt, 0, 0, RW, RH, probe.buf);
+      let n = 0; for (let i = 0; i < probe.buf.length; i += 4) if (probe.buf[i] > 127) n++;
+      return n * bias;
+    });
+    renderer.setRenderTarget(null); renderer.setClearColor(cc, ca);
+    for (const k in meshes) { meshes[k].material = saved[k]; meshes[k].visible = vis[k]; }
+    let best = 0; sc.forEach((s, d) => { if (s > sc[best]) best = d; });
+    return VIEWS[best][0];
   }
   let curAz = 0;
   bar.addEventListener("click", (e) => {
@@ -248,22 +274,14 @@ export async function mount(el, opts) {
     const tri = [new Uint16Array(cnt[0]), new Uint16Array(cnt[1]), new Uint16Array(cnt[2])];
     const at = [0, 0, 0];
     const box = new THREE.Box3(), tmp = new THREE.Vector3();
-    const pos = M.m.pos, nrm = M.m.nrm, score = VIEWS.map(() => 0);
-    const dirs = VIEWS.map(([az]) => [Math.sin(az), Math.cos(az)]);
+    const pos = M.m.pos;
     P.forEach((p, i) => {
       const c = cls[i], to = p[4], nt = p[5];
       arr[c].set(M.m.idx.subarray(to * 3, (to + nt) * 3), at[c] * 3);
       tri[c].fill(i, at[c], at[c] + nt);
       at[c] += nt;
       if (c === 1 || (c === 2 && !pri.size)) {
-        // 부위마다 같은 무게(정점 수가 많은 큰 근육 하나가 방향을 독차지하지 않게)
-        const part = dirs.map(() => 0);
-        for (let v = p[2]; v < p[2] + p[3]; v++) {
-          box.expandByPoint(tmp.set(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]));
-          const nx = nrm[v * 3], nz = nrm[v * 3 + 2];
-          for (let d = 0; d < dirs.length; d++) { const s = nx * dirs[d][0] + nz * dirs[d][1]; if (s > 0) part[d] += s; }
-        }
-        for (let d = 0; d < dirs.length; d++) score[d] += part[d] / Math.max(1, p[3]);
+        for (let v = p[2]; v < p[2] + p[3]; v++) box.expandByPoint(tmp.set(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]));
       }
     });
     [["base", 0], ["pri", 1], ["sec", 2]].forEach(([k, c]) => {
@@ -275,10 +293,7 @@ export async function mount(el, opts) {
     autoX = mostlyDeep(lib, o.primary && o.primary.length ? o.primary : o.secondary);
     setX(o.xray != null ? o.xray : autoX);
     frame = box.isEmpty() ? null : box;
-    // 대상 근육이 가장 많이 보이는 방향(정점 법선이 그쪽을 향하는 정도의 합)에서 본다
-    let best = 0;
-    score.forEach((s, d) => { if (s * VIEWS[d][1] > score[best] * VIEWS[best][1]) best = d; });
-    curAz = frame ? VIEWS[best][0] : 0;
+    curAz = frame ? bestView(cnt[1] ? "pri" : "sec", o.focus === false ? null : frame) : 0;
     look(curAz, o.focus === false ? null : frame);
     tag.hidden = true;
   }
@@ -291,6 +306,7 @@ export async function mount(el, opts) {
       alive = false;
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect(); controls.dispose();
+      if (probe) { probe.rt.dispose(); probe.white.dispose(); probe.black.dispose(); }
       ["pri", "sec", "base"].forEach((k) => meshes[k].geometry.dispose());
       Object.values(mats).forEach((m) => m.dispose());
       renderer.dispose();

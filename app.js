@@ -33,13 +33,42 @@
   var ST = lsGet("rt_state");
   if (!ST || !ST.cfg) ST = { cfg: clone(DEF), log: (ST && ST.log) || {}, upd: 0 };
   var CAL = lsGet("rt_cal");
-  (function migrate(c) {
-    c.customEx = c.customEx || {};
-    c.links = c.links || clone(DEF.links);
-    c.notify = c.notify || clone(DEF.notify);
-    c.cats = c.cats || clone(DEF.cats);
-    if (!c.start) c.start = C.dkey();
-  })(ST.cfg);
+  // 설정 고치기(한 번씩만). 바꾼 것이 있으면 true — 서버에서 받은 설정에도 돌려서 바뀌면 다시 올린다
+  function migrate(c) {
+    var ch = false;
+    if (!c.customEx) { c.customEx = {}; ch = true; }
+    if (!c.links) { c.links = clone(DEF.links); ch = true; }
+    if (!c.notify) { c.notify = clone(DEF.notify); ch = true; }
+    if (!c.cats) { c.cats = clone(DEF.cats); ch = true; }
+    if (!c.start) { c.start = C.dkey(); ch = true; }
+    c.mig = c.mig || {};
+    // 2026-11-23 사용자 지시: 외국어 링크는 언어마다 따로 걸지 말고 외국어 공부 사이트 링크 하나만
+    if (!c.mig.langLink) {
+      (c.routines || []).forEach(function (r) {
+        if (r.kind === "any" && (r.items || []).some(function (it) { return /^lang:/.test(it.link || ""); })) {
+          r.items.forEach(function (it) { if (/^lang:/.test(it.link || "")) delete it.link; });
+          if (!r.link) r.link = "lang";
+        }
+      });
+      c.mig.langLink = 1; ch = true;
+    }
+    // 2026-11-23 사용자 지시: 모든 운동은 집에서 하는 맨몸 운동으로 → 책가방 운동을 맨몸 운동으로 바꾼다
+    if (!c.mig.bodyweight) {
+      (c.routines || []).forEach(function (r) {
+        if (r.kind !== "workout" || !r.sessions) return;
+        Object.keys(r.sessions).forEach(function (sid) {
+          (r.sessions[sid].items || []).forEach(function (it) {
+            if (it.ex === "bp_row") it.ex = "door_row";
+            if (it.ex === "bp_rdl") { it.ex = "sl_rdl"; it.reps = "한 다리 8–10회"; }
+          });
+        });
+        if (r.note) r.note = r.note.replace("(집에서 맨몸 + 책가방)", "(집에서 맨몸으로만)");
+      });
+      c.mig.bodyweight = 1; ch = true;
+    }
+    return ch;
+  }
+  migrate(ST.cfg);
   ST.log = ST.log || {};
 
   function cfg() { return ST.cfg; }
@@ -125,9 +154,11 @@
     function attempt() {
       return readRow(P.state).then(function (row) {
         var remote = row && row.data;
-        var merged = remote ? C.mergeState(ST, remote) : ST;
+        var remoteStr = JSON.stringify(remote);
+        var merged = remote ? C.mergeState(ST, clone(remote)) : ST;
+        if (migrate(merged.cfg)) merged.cfg.upd = Date.now();
         ST = merged; saveLocal();
-        if (row && JSON.stringify(remote) === JSON.stringify(merged)) return;
+        if (row && remoteStr === JSON.stringify(merged)) return;
         return writeRow(P.state, merged, row ? row.ver : null).then(function (v) {
           if (v == null) { if (++tries < 4) return attempt(); throw new Error("다른 기기와 동시에 저장하는 중입니다."); }
         });
@@ -219,7 +250,8 @@
   function linkName(spec) {
     var L = cfg().links || {};
     if (spec === "medq") return (L.medq && L.medq.name) || "KU MedQ";
-    if (spec && spec.indexOf("lang") === 0) return "공부하기";
+    if (spec === "lang") return (L.lang && L.lang.name) || "외국어 공부";
+    if (spec && spec.indexOf("lang:") === 0) return "공부하기";
     return "열기";
   }
   function goBtn(spec, label) {
@@ -286,7 +318,8 @@
     var r = D.r, st = C.status(D, ST.log, dk), h = '<div class="rt">';
     var sub = r.kind === "any" ? D.min + "개 이상" : r.kind === "workout" ? (D.rest ? "" : esc(D.session.s.name)) : r.kind === "steps" ? "순서대로" : "";
     h += '<div class="rt-h"><h3>' + esc(r.title) + "</h3>" + (sub ? '<span class="sub">' + sub + "</span>" : "") +
-      (r.kind === "workout" && !D.rest ? '<a class="go act" href="#/session/' + esc(r.id) + "/" + esc(D.session.id) + '">근육 보기</a>' : "") + "</div>";
+      (r.kind === "workout" && !D.rest ? '<a class="go act" href="#/session/' + esc(r.id) + "/" + esc(D.session.id) + '">근육 보기</a>' : "") +
+      (r.link && linkUrl(r.link) ? goBtn(r.link).replace('class="go"', 'class="go act"') : "") + "</div>";
     if (r.when && r.when.type === "major") h += '<div class="note">' + majorLine(dk) + "</div>";
     if (r.kind === "workout") {
       if (D.rest) return h + '<div class="empty">오늘은 쉬는 날입니다. 잘 자는 것도 운동입니다.</div></div>';
@@ -513,9 +546,9 @@
     }).join("") + "</div>" +
       '<h3>이렇게 짰습니다</h3><ul style="margin:4px 0;padding-left:18px;font-size:14px">' +
       "<li><b>근력은 주 3번(화·목·토), 30분 안팎.</b> 세 번 모두 온몸을 나눠 쓰되 A는 하체·밀기, B는 등·몸 뒤쪽, C는 한 다리·어깨·옆구리에 무게를 둡니다. 큰 근육마다 한 주에 두 번 이상 자극이 가도록 맞췄습니다.</li>" +
-      "<li><b>집에서, 돈 들이지 않고.</b> 맨몸과 책을 넣은 백팩(5–8 kg)만 씁니다. 헬스장에 다니게 되면 운동을 바꿔 넣으면 됩니다(설정 → 루틴 → 운동).</li>" +
+      "<li><b>집에서, 맨몸으로만.</b> 기구 없이 바닥·벽·의자·문틀만 씁니다. 무게를 더하는 대신 템포(천천히 내리기), 멈춤, 한쪽씩 하기로 어렵게 만듭니다. 운동은 설정 → 루틴 → 운동에서 바꿀 수 있습니다.</li>" +
       "<li><b>월·수·금은 가볍게.</b> 빠르게 걷기 30분이나 스트레칭 10분 중 하나면 그날 운동은 끝입니다. 등하교를 걸어도 칩니다. 일요일은 쉽니다.</li>" +
-      "<li><b>늘리는 규칙.</b> 모든 세트를 범위의 위쪽 횟수로 자세를 지키며 두 번 연속 해내면, 다음 주에 그 운동의 ‘어렵게’ 단계로 바꾸거나 가방에 책을 더 넣습니다.</li>" +
+      "<li><b>늘리는 규칙.</b> 모든 세트를 범위의 위쪽 횟수로 자세를 지키며 두 번 연속 해내면, 다음 주에 그 운동의 ‘어렵게’ 단계(느리게·멈춤·한쪽씩)로 바꿉니다.</li>" +
       "<li><b>아프면 멈춥니다.</b> 근육이 뻐근한 것은 괜찮지만 관절이 찌르듯 아프면 그 운동은 ‘쉽게’ 단계로 바꿉니다.</li></ul>" +
       '<div class="btns"><a class="btn ghost sm" href="#/muscles">근육 사전</a><a class="btn ghost sm" href="#/edit/' + esc(r.id) + '">운동 바꾸기</a></div></div>';
     Object.keys(r.sessions).forEach(function (sid) {
@@ -879,11 +912,13 @@
     if (d.kind === "workout" && !d.sessions) { d.week = { 0: "rest", 1: "rest", 2: "rest", 3: "rest", 4: "rest", 5: "rest", 6: "rest" }; d.sessions = { rest: { name: "쉬는 날", items: [] } }; }
     setTop(isNew ? "루틴 추가" : "루틴 고치기", "#/settings", "settings");
     var exIds = Object.keys(viewLib().exercises);
-    function linkSel(i, v) {
-      var opts = [["", "없음"], ["medq", "KU MedQ"], ["lang:zh", "외국어 · 중국어"], ["lang:ja", "외국어 · 일본어"], ["lang:ru", "외국어 · 러시아어"], ["lang", "외국어 공부(처음 화면)"]];
+    // 링크 고르기. pre = "items.3." (항목) 또는 "" (루틴 이름 옆 단추)
+    function linkSel(pre, v) {
+      var opts = [["", "링크 없음"], ["medq", "KU MedQ"], ["lang", "외국어 공부"]];
+      if (v && /^lang:/.test(v)) opts.push([v, "외국어 공부(" + v.slice(5) + ")"]);
       var custom = v && /^https?:/.test(v);
-      return '<select data-f="items.' + i + '.link">' + opts.map(function (o) { return '<option value="' + o[0] + '"' + ((v || "") === o[0] ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + '<option value="url"' + (custom ? " selected" : "") + ">직접 주소</option></select>" +
-        (custom ? '<input type="url" data-f="items.' + i + '.url" value="' + esc(v) + '" placeholder="https://">' : "");
+      return '<select data-f="' + pre + 'link">' + opts.map(function (o) { return '<option value="' + o[0] + '"' + ((v || "") === o[0] ? " selected" : "") + ">" + o[1] + "</option>"; }).join("") + '<option value="url"' + (custom ? " selected" : "") + ">직접 주소</option></select>" +
+        (custom ? '<input type="url" data-f="' + pre + 'url" value="' + esc(v) + '" placeholder="https://">' : "");
     }
     function draw() {
       var h = '<div class="card">';
@@ -904,10 +939,11 @@
         h += "</div>";
         if (d.kind === "any") h += '<div class="field"><label>몇 개 이상 하면 끝?</label><input type="number" min="1" data-f="min" value="' + (d.min || 1) + '"></div>';
         h += '<div class="field"><label>설명 (선택)</label><input type="text" data-f="note" value="' + esc(d.note || "") + '"></div>';
+        h += '<div class="field"><label>루틴 링크 (이름 옆 단추 하나)</label>' + linkSel("", d.link) + "</div>";
         h += '<div class="field"><span class="lab">' + (d.kind === "steps" ? "단계 (위에서부터 순서대로)" : "항목") + "</span>";
         (d.items || []).forEach(function (it, i) {
           h += '<div class="ed-item"><div><input type="text" data-f="items.' + i + '.t" value="' + esc(it.t) + '" placeholder="할 일">' +
-            '<div class="grid2" style="margin-top:6px"><input type="text" data-f="items.' + i + '.hint" value="' + esc(it.hint || "") + '" placeholder="작은 설명(선택)"><div>' + linkSel(i, it.link) + "</div></div></div>" +
+            '<div class="grid2" style="margin-top:6px"><input type="text" data-f="items.' + i + '.hint" value="' + esc(it.hint || "") + '" placeholder="작은 설명(선택)"><div>' + linkSel("items." + i + ".", it.link) + "</div></div></div>" +
             '<div class="tools"><button type="button" data-act="iup" data-i="' + i + '">' + ICON.up.replace("<svg", '<svg width="14" height="14"') + '</button><button type="button" data-act="idel" data-i="' + i + '">' + ICON.x.replace("<svg", '<svg width="14" height="14"') + "</button></div></div>";
         });
         h += '<button class="btn ghost sm" data-act="iadd">항목 추가</button></div>';
@@ -944,8 +980,8 @@
       if (f === "when.type") { d.when = { type: x.value, days: (d.when && d.when.days) || [] }; draw(); return; }
       if (f === "when.day") { var dd = +x.value; d.when.days = (d.when.days || []).filter(function (y) { return y !== dd; }); if (x.checked) d.when.days.push(dd); return; }
       if (f === "perSubject" || f === "off") { d[f] = x.checked; return; }
-      if (/\.link$/.test(f)) { if (x.value === "url") { setPath(f, "https://"); draw(); } else setPath(f, x.value || undefined); return; }
-      if (/\.url$/.test(f)) { setPath(f.replace(/\.url$/, ".link"), x.value); return; }
+      if (/(^|\.)link$/.test(f)) { if (x.value === "url") { setPath(f, "https://"); draw(); } else setPath(f, x.value || undefined); return; }
+      if (/(^|\.)url$/.test(f)) { setPath(f.replace(/url$/, "link"), x.value); return; }
       if (/\.(sets|any)$/.test(f) || f === "min") { setPath(f, Math.max(0, parseInt(x.value, 10) || 0)); return; }
       setPath(f, x.value);
     };
