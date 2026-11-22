@@ -1,0 +1,6 @@
+model/body.json, model/body.bin
+
+Derived from Z-Anatomy (https://www.z-anatomy.com/), licensed CC BY-SA 4.0,
+which is derived from BodyParts3D, (c) The Database Center for Life Science, licensed CC BY-SA 2.1 Japan.
+Changes: only the muscular and skeletal meshes were kept, internal muscles removed, meshes decimated and quantized.
+This derived model is distributed under CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/).
