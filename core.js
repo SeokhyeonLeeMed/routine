@@ -121,16 +121,6 @@
     return s;
   }
 
-  // 순서형(steps): 앞 단계가 끝나야 다음 단계를 체크할 수 있다
-  function canCheck(D, it, log, dk) {
-    if (D.r.kind !== "steps") return true;
-    var g = null;
-    D.groups.forEach(function (x) { if (x.items.indexOf(it) >= 0) g = x; });
-    if (!g) return true;
-    for (var i = 0; i < it.idx; i++) if (nOf(log, dk, g.items[i].key) < g.items[i].need) return false;
-    return true;
-  }
-
   // 기록 합치기: 칸마다 늦게 바꾼 쪽, 설정은 upd가 늦은 쪽
   function mergeLog(a, b) {
     var out = {}, k;
@@ -208,7 +198,7 @@
   return {
     WD: WD, dkey: dkey, wday: wday, addDays: addDays, nowMin: nowMin, hm: hm, label: label,
     subjById: subjById, majorsOn: majorsOn, majorSource: majorSource, sessionOf: sessionOf,
-    dueFor: dueFor, status: status, summary: summary, nOf: nOf, canCheck: canCheck,
+    dueFor: dueFor, status: status, summary: summary, nOf: nOf,
     mergeLog: mergeLog, mergeState: mergeState, exName: exName,
     planText: planText, leftText: leftText, dueSlots: dueSlots, shortSubj: shortSubj
   };

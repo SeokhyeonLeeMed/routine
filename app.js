@@ -15,7 +15,6 @@
   var SVG = function (d, extra) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"' + (extra || "") + ">" + d + "</svg>"; };
   var ICON = {
     check: SVG('<path d="M5 12.5l4.5 4.5L19 7.5"/>', ' stroke-width="3"'),
-    lock: SVG('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'),
     ext: SVG('<path d="M7 17L17 7M9 7h8v8"/>'),
     chev: SVG('<path d="M9 6l6 6-6 6"/>'),
     back: SVG('<path d="M15 6l-6 6 6 6"/>'),
@@ -308,8 +307,8 @@
     var why = src === "manual" ? "직접 바꾼 날" : src === "calendar" ? "iCloud 시간표 기준" : C.WD[C.wday(dk)] + "요일 시간표 기준";
     return (subs.length ? "" : "전공 수업이 없는 날입니다 · ") + '<span class="small">' + esc(why) + '</span> <button class="chipbtn" data-act="major">' + (subs.length ? "과목 바꾸기" : "수업 있는 날로") + "</button>";
   }
-  function ckBtn(on, lock, attrs) {
-    return '<button class="ck' + (on ? " on" : "") + (lock ? " lock" : "") + '" ' + attrs + ' aria-pressed="' + (on ? "true" : "false") + '">' + (lock ? ICON.lock.replace("<svg", '<svg style="opacity:.6;color:var(--faint)"') : ICON.check) + "</button>";
+  function ckBtn(on, attrs) {
+    return '<button class="ck' + (on ? " on" : "") + '" ' + attrs + ' aria-pressed="' + (on ? "true" : "false") + '">' + ICON.check + "</button>";
   }
   function musShort(e) {
     return expand(e.primary).slice(0, 3).map(function (id) { return LIB.muscles[id].en; }).join(" · ");
@@ -331,7 +330,7 @@
           h += '<div class="sets">';
           for (var i = 0; i < it.need; i++) h += '<button class="set' + (i < n ? " on" : "") + '" data-act="set" data-key="' + esc(it.key) + '" data-i="' + i + '" data-need="' + it.need + '" data-rest="' + (e.rest || 0) + '" aria-label="' + (i + 1) + '세트">' + (i + 1) + "</button>";
           h += "</div>";
-        } else h += ckBtn(done, false, 'data-act="ck" data-key="' + esc(it.key) + '" data-need="1"');
+        } else h += ckBtn(done, 'data-act="ck" data-key="' + esc(it.key) + '" data-need="1"');
         h += '<a class="txt" href="#/ex/' + esc(it.ex) + "?r=" + esc(r.id) + "&s=" + esc(D.session.id) + "&d=" + dk + '"><div class="t">' + esc(it.t || e.name) + '</div><div class="h">' + esc(it.reps || "") + (it.need > 1 ? " × " + it.need + "세트" : "") + "</div>" +
           (e.primary && e.primary.length ? '<div class="mus en">' + esc(musShort(e)) + "</div>" : "") + "</a>" +
           '<span class="chev">' + ICON.chev + "</span></div>";
@@ -343,7 +342,7 @@
       h += '<div class="opts">';
       D.groups[0].items.forEach(function (it) {
         var on = C.nOf(ST.log, dk, it.key) >= 1;
-        h += '<div class="opt' + (on ? " on" : "") + '">' + ckBtn(on, false, 'data-act="ck" data-key="' + esc(it.key) + '" data-need="1"') + '<span class="t">' + esc(it.t) + "</span>" + goBtn(it.link) + "</div>";
+        h += '<div class="opt' + (on ? " on" : "") + '">' + ckBtn(on, 'data-act="ck" data-key="' + esc(it.key) + '" data-need="1"') + '<span class="t">' + esc(it.t) + "</span>" + goBtn(it.link) + "</div>";
       });
       return h + "</div></div>";
     }
@@ -352,11 +351,10 @@
       if (D.groups.length > 1 || g.title) h += '<div class="subj"><div class="subj-t">' + esc(g.title || "") + (gs.done >= gs.total ? ' <span class="small" style="color:var(--ok)">완료</span>' : "") + "</div>";
       g.items.forEach(function (it, ii) {
         var on = C.nOf(ST.log, dk, it.key) >= it.need;
-        var lock = !on && !C.canCheck(D, it, ST.log, dk);
-        var isNext = r.kind === "steps" && !on && !lock && gs.next === it;
-        h += '<div class="row' + (on ? " done" : "") + (lock ? " locked" : "") + (isNext ? " next" : "") + '">' +
+        var isNext = r.kind === "steps" && !on && gs.next === it;
+        h += '<div class="row' + (on ? " done" : "") + (isNext ? " next" : "") + '">' +
           (r.kind === "steps" ? '<span class="stepno">' + (ii + 1) + "</span>" : "") +
-          ckBtn(on, lock, 'data-act="ck" data-key="' + esc(it.key) + '" data-need="' + it.need + '" data-d="' + di + '" data-g="' + gi + '" data-i="' + ii + '"') +
+          ckBtn(on, 'data-act="ck" data-key="' + esc(it.key) + '" data-need="' + it.need + '"') +
           '<div class="txt"><div class="t">' + esc(it.t) + "</div>" + (it.hint ? '<div class="h">' + esc(it.hint) + "</div>" : "") + "</div>" + goBtn(it.link, it.link === "medq" ? null : undefined) + "</div>";
       });
       if (D.groups.length > 1 || g.title) h += "</div>";
@@ -369,21 +367,6 @@
     if (act === "major") { majorSheet(dk); return; }
     if (act === "ck") {
       var key = b.dataset.key, need = +b.dataset.need || 1, cur = C.nOf(ST.log, dk, key);
-      if (b.dataset.d != null) {
-        var D = C.dueFor(cfg(), CAL, ST.log, dk)[+b.dataset.d], g = D && D.groups[+b.dataset.g], it = g && g.items[+b.dataset.i];
-        if (D && it && D.r.kind === "steps") {
-          if (cur < need && !C.canCheck(D, it, ST.log, dk)) {
-            var first = null; g.items.forEach(function (x) { if (!first && C.nOf(ST.log, dk, x.key) < x.need) first = x; });
-            toast("순서대로 합니다 — '" + (first ? first.t : "앞 단계") + "'부터 체크해 주십시오.");
-            return;
-          }
-          if (cur >= need) {
-            var later = g.items.filter(function (x) { return x.idx > it.idx && C.nOf(ST.log, dk, x.key) >= x.need; });
-            if (later.length && !confirm("뒤 단계(" + later.map(function (x) { return x.t; }).join(", ") + ")도 함께 풀립니다. 계속할까요?")) return;
-            later.forEach(function (x) { ST.log[dk][x.key] = { n: 0, t: Date.now() }; });
-          }
-        }
-      }
       setN(dk, key, cur >= need ? 0 : need);
       if (navigator.vibrate && cur < need) navigator.vibrate(12);
       rerender();
